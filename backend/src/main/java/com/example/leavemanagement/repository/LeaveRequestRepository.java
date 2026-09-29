@@ -10,9 +10,12 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Optional;
 
 public interface LeaveRequestRepository extends JpaRepository<LeaveRequest, Long> {
+
+    List<LeaveRequest> findByEmployee_NameContainingIgnoreCaseOrderByStartDateDesc(String name);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select r from LeaveRequest r where r.id = :id")

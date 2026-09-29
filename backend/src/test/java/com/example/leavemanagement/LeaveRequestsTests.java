@@ -210,6 +210,17 @@ class LeaveRequestsTests {
         assertEquals(1, approved);
     }
 
+    @Test
+    void search_DoesNotTreatInputAsSql() {
+        Employee emp = employeeWithUsedDays(20, 3);
+
+        ResponseEntity<List<LeaveRequest>> injected = controller.search("x' OR '1'='1");
+        ResponseEntity<List<LeaveRequest>> byName = controller.search("test emp");
+
+        assertTrue(injected.getBody().isEmpty());
+        assertTrue(byName.getBody().stream().anyMatch(r -> r.getEmployeeId().equals(emp.getId())));
+    }
+
     private LeaveRequest savePending(Employee emp, LocalDate start, int days) {
         LeaveRequest r = new LeaveRequest();
         r.setEmployeeId(emp.getId());

@@ -18,3 +18,27 @@ button:hover {
   border-radius: 4px;
   margin-bottom: 12px;
 }
+
+button:disabled {
+  background: #9fb3c8;
+  cursor: default;
+}
+
+.notice {
+  min-height: 32px;
+}
+
+.success {
+  display: inline-block;
+  color: #05603a;
+  background: #ecfdf3;
+  border: 1px solid #abefc6;
+  padding: 6px 12px;
+  border-radius: 4px;
+}
+
+.row-error {
+  color: #b42318;
+  font-size: 13px;
+  margin-top: 4px;
+}

@@ -2,6 +2,12 @@
 
 <!-- TODO (candidate): add the "new request" form here, with validation. -->
 
+<div class="notice" role="status" aria-live="polite">
+  @if (notice()) {
+    <span class="success">{{ notice() }}</span>
+  }
+</div>
+
 @if (loading()) {
   <div>Loading...</div>
 } @else if (loadError()) {
@@ -35,7 +41,12 @@
           <td>{{ statusLabels[r.status] }}</td>
           <td>
             @if (r.status === LeaveStatus.Pending) {
-              <button type="button" (click)="approve(r.id)">Approve</button>
+              <button type="button" [disabled]="approving().has(r.id)" (click)="approve(r)">
+                {{ approving().has(r.id) ? 'Approving...' : 'Approve' }}
+              </button>
+            }
+            @if (approveErrors()[r.id]; as error) {
+              <div class="row-error" role="alert">{{ error }}</div>
             }
           </td>
         </tr>

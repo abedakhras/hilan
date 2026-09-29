@@ -1,7 +1,7 @@
 import { Component, DestroyRef, OnInit, inject, signal } from '@angular/core';
 import { DatePipe } from '@angular/common';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { finalize } from 'rxjs';
+import { Subject, finalize, switchMap, tap, timer } from 'rxjs';
 import { LEAVE_STATUS_LABELS, LEAVE_TYPE_LABELS, LeaveRequest, LeaveStatus } from '../models/leave-request.model';
 import { LeaveRequestService } from '../services/leave-request.service';
 import { apiErrorMessage } from '../services/api-error';
@@ -21,9 +21,25 @@ export class LeaveRequestsComponent implements OnInit {
   readonly loading = signal(false);
   readonly loadError = signal<string | null>(null);
 
+  readonly approving = signal<ReadonlySet<number>>(new Set());
+  readonly approveErrors = signal<Readonly<Record<number, string>>>({});
+  readonly notice = signal<string | null>(null);
+  private readonly notice$ = new Subject<string>();
+
   readonly LeaveStatus = LeaveStatus;
   readonly typeLabels = LEAVE_TYPE_LABELS;
   readonly statusLabels = LEAVE_STATUS_LABELS;
+
+  constructor() {
+    // Show the latest success message and hide it a few seconds later.
+    this.notice$
+      .pipe(
+        tap((message) => this.notice.set(message)),
+        switchMap(() => timer(4000)),
+        takeUntilDestroyed()
+      )
+      .subscribe(() => this.notice.set(null));
+  }
 
   ngOnInit(): void {
     this.load();
@@ -44,9 +60,45 @@ export class LeaveRequestsComponent implements OnInit {
       });
   }
 
-  approve(id: number): void {
+  approve(request: LeaveRequest): void {
+    const id = request.id;
+    if (this.approving().has(id)) {
+      return;
+    }
+    this.setApproving(id, true);
+    this.setApproveError(id, null);
+
     this.leaveRequestService.approve(id)
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe(() => this.load());
+      .pipe(
+        finalize(() => this.setApproving(id, false)),
+        takeUntilDestroyed(this.destroyRef)
+      )
+      .subscribe({
+        next: (updated) => {
+          // Only the approved row changes, no need to reload the whole list.
+          this.requests.update((list) => list.map((r) => (r.id === updated.id ? updated : r)));
+          this.notice$.next(`Request #${updated.id} (${updated.employeeName}) approved.`);
+        },
+        error: (err) => this.setApproveError(id, apiErrorMessage(err, 'Could not approve this request.'))
+      });
+  }
+
+  private setApproving(id: number, value: boolean): void {
+    this.approving.update((current) => {
+      const next = new Set(current);
+      if (value) {
+        next.add(id);
+      } else {
+        next.delete(id);
+      }
+      return next;
+    });
+  }
+
+  private setApproveError(id: number, message: string | null): void {
+    this.approveErrors.update((current) => {
+      const { [id]: _, ...rest } = current;
+      return message ? { ...rest, [id]: message } : rest;
+    });
   }
 }

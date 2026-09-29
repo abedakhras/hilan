@@ -5,11 +5,12 @@ import { Subject, finalize, switchMap, tap, timer } from 'rxjs';
 import { LEAVE_STATUS_LABELS, LEAVE_TYPE_LABELS, LeaveRequest, LeaveStatus } from '../models/leave-request.model';
 import { LeaveRequestService } from '../services/leave-request.service';
 import { apiErrorMessage } from '../services/api-error';
+import { LeaveRequestFormComponent } from '../leave-request-form/leave-request-form.component';
 
 @Component({
   selector: 'app-leave-requests',
   standalone: true,
-  imports: [DatePipe],
+  imports: [DatePipe, LeaveRequestFormComponent],
   templateUrl: './leave-requests.component.html',
   styleUrls: ['./leave-requests.component.css']
 })
@@ -58,6 +59,13 @@ export class LeaveRequestsComponent implements OnInit {
         next: (requests) => this.requests.set(requests),
         error: (err) => this.loadError.set(apiErrorMessage(err, 'Could not load leave requests.'))
       });
+  }
+
+  onCreated(request: LeaveRequest): void {
+    this.requests.update((list) =>
+      [request, ...list].sort((a, b) => b.startDate.localeCompare(a.startDate))
+    );
+    this.notice$.next(`Request #${request.id} submitted.`);
   }
 
   approve(request: LeaveRequest): void {

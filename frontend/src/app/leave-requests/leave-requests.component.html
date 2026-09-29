@@ -1,6 +1,6 @@
 <h2>Leave Requests</h2>
 
-<!-- TODO (candidate): add the "new request" form here, with validation. -->
+<app-leave-request-form (created)="onCreated($event)" />
 
 <div class="notice" role="status" aria-live="polite">
   @if (notice()) {

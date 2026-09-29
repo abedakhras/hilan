@@ -23,6 +23,7 @@ describe('LeaveRequestsComponent', () => {
     const fixture = TestBed.createComponent(LeaveRequestsComponent);
     fixture.detectChanges();
     http.expectOne(`${API_URL}/leave-requests`).flush([pending]);
+    http.expectOne(`${API_URL}/employees`).flush([]); // loaded by the embedded form
     fixture.detectChanges();
     return fixture;
   }

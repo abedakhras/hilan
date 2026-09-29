@@ -2,33 +2,46 @@
 
 <!-- TODO (candidate): add the "new request" form here, with validation. -->
 
-<div *ngIf="loading">Loading...</div>
-
-<table *ngIf="!loading">
-  <thead>
-    <tr>
-      <th>#</th>
-      <th>Employee</th>
-      <th>Type</th>
-      <th>Start</th>
-      <th>End</th>
-      <th>Days</th>
-      <th>Status</th>
-      <th></th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr *ngFor="let r of requests">
-      <td>{{ r.id }}</td>
-      <td>{{ r.employee?.name }}</td>
-      <td>{{ typeLabel(r.type) }}</td>
-      <td>{{ r.startDate | date: 'dd/MM/yyyy' }}</td>
-      <td>{{ r.endDate | date: 'dd/MM/yyyy' }}</td>
-      <td>{{ r.days }}</td>
-      <td>{{ statusLabel(r.status) }}</td>
-      <td>
-        <button *ngIf="r.status == 0" (click)="approve(r.id)">Approve</button>
-      </td>
-    </tr>
-  </tbody>
-</table>
+@if (loading()) {
+  <div>Loading...</div>
+} @else if (loadError()) {
+  <div class="error">
+    {{ loadError() }}
+    <button type="button" (click)="load()">Retry</button>
+  </div>
+} @else {
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Employee</th>
+        <th>Type</th>
+        <th>Start</th>
+        <th>End</th>
+        <th>Days</th>
+        <th>Status</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      @for (r of requests(); track r.id) {
+        <tr>
+          <td>{{ r.id }}</td>
+          <td>{{ r.employeeName }}</td>
+          <td>{{ typeLabels[r.type] }}</td>
+          <td>{{ r.startDate | date: 'dd/MM/yyyy' }}</td>
+          <td>{{ r.endDate | date: 'dd/MM/yyyy' }}</td>
+          <td>{{ r.days }}</td>
+          <td>{{ statusLabels[r.status] }}</td>
+          <td>
+            @if (r.status === LeaveStatus.Pending) {
+              <button type="button" (click)="approve(r.id)">Approve</button>
+            }
+          </td>
+        </tr>
+      } @empty {
+        <tr><td colspan="8">No leave requests yet.</td></tr>
+      }
+    </tbody>
+  </table>
+}

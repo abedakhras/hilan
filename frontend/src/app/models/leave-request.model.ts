@@ -1,5 +1,27 @@
-// Intentionally thin. Part of the task is to introduce proper typing
-// across the frontend instead of the `any` usage in the component.
+// The API sends both enums as numbers (see LeaveType / LeaveStatus on the backend).
+export enum LeaveType {
+  Vacation = 0,
+  Sick = 1,
+  Unpaid = 2
+}
+
+export enum LeaveStatus {
+  Pending = 0,
+  Approved = 1,
+  Rejected = 2
+}
+
+export const LEAVE_TYPE_LABELS: Record<LeaveType, string> = {
+  [LeaveType.Vacation]: 'Vacation',
+  [LeaveType.Sick]: 'Sick',
+  [LeaveType.Unpaid]: 'Unpaid'
+};
+
+export const LEAVE_STATUS_LABELS: Record<LeaveStatus, string> = {
+  [LeaveStatus.Pending]: 'Pending',
+  [LeaveStatus.Approved]: 'Approved',
+  [LeaveStatus.Rejected]: 'Rejected'
+};
 
 export interface Employee {
   id: number;
@@ -10,11 +32,17 @@ export interface Employee {
 export interface LeaveRequest {
   id: number;
   employeeId: number;
-  // Populated by the API on reads; absent on the response to a create.
-  employee?: Employee;
-  type: number;
+  employeeName: string;
+  type: LeaveType;
+  startDate: string; // yyyy-MM-dd
+  endDate: string;
+  days: number;
+  status: LeaveStatus;
+}
+
+export interface CreateLeaveRequest {
+  employeeId: number;
+  type: LeaveType;
   startDate: string;
   endDate: string;
-  status: number;
-  days: number;
 }

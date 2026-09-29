@@ -1,6 +1,7 @@
 package com.example.leavemanagement.service;
 
 import com.example.leavemanagement.dto.EmployeeBalanceResponse;
+import com.example.leavemanagement.exception.InvalidRequestException;
 import com.example.leavemanagement.model.Employee;
 import com.example.leavemanagement.model.LeaveStatus;
 import com.example.leavemanagement.model.LeaveType;
@@ -29,6 +30,10 @@ public class EmployeeBalanceService {
 
     @Transactional(readOnly = true)
     public List<EmployeeBalanceResponse> getBalances(int year) {
+        if (year < 1 || year > 9999) {
+            throw new InvalidRequestException("Year must be between 1 and 9999");
+        }
+
         Map<Long, List<DaysTotal>> totalsByEmployee = leaveRequests
                 .sumDaysPerEmployee(LocalDate.of(year, 1, 1), LocalDate.of(year, 12, 31))
                 .stream()

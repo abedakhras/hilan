@@ -39,6 +39,56 @@ describe('LeaveRequestsComponent', () => {
 
   afterEach(() => http.verify());
 
+  for (const includesCreated of [false, true]) {
+    it(`keeps a new request when loading finishes (server includes it: ${includesCreated})`, () => {
+      const fixture = TestBed.createComponent(LeaveRequestsComponent);
+      fixture.detectChanges();
+      const listRequest = http.expectOne(`${API_URL}/leave-requests`);
+      http.expectOne((r) => r.url === `${API_URL}/employees/balances`).flush([]);
+      http.expectOne(`${API_URL}/employees`).flush([]);
+      const created = { ...pending, id: 8, startDate: '2026-07-01', endDate: '2026-07-02' };
+
+      fixture.componentInstance.onCreated(created);
+      http.expectOne((r) => r.url === `${API_URL}/employees/balances`).flush([]);
+      listRequest.flush(includesCreated ? [created, pending] : [pending]);
+
+      expect(fixture.componentInstance.requests().map((r) => r.id)).toEqual([8, 7]);
+      expect(fixture.componentInstance.loading()).toBeFalse();
+    });
+  }
+
+  it('cancels an older balance refresh when a new refresh starts', () => {
+    const component = setup().componentInstance;
+    component.loadBalances();
+    const older = http.expectOne((r) => r.url === `${API_URL}/employees/balances`);
+
+    component.loadBalances();
+    expect(older.cancelled).toBeTrue();
+    const latest = [{
+      employeeId: 1, employeeName: 'Dana Levi', year: component.balanceYear,
+      vacationQuota: 20, vacationUsed: 8, vacationPending: 0,
+      vacationRemaining: 12, sickUsed: 0, unpaidUsed: 0
+    }];
+    http.expectOne((r) => r.url === `${API_URL}/employees/balances`).flush(latest);
+
+    expect(component.balances()).toEqual(latest);
+  });
+
+  it('can refresh balances again after an error', () => {
+    const component = setup().componentInstance;
+    component.loadBalances();
+    http.expectOne((r) => r.url === `${API_URL}/employees/balances`).flush(
+      { detail: 'Temporary failure' }, { status: 500, statusText: 'Server Error' }
+    );
+    expect(component.balancesError()).toBe('Temporary failure');
+
+    component.loadBalances();
+    http.expectOne((r) => r.url === `${API_URL}/employees/balances`).flush([]);
+
+    expect(component.balancesError()).toBeNull();
+    expect(component.balances()).toEqual([]);
+  });
+
   it('updates only the approved row and shows a success message', () => {
     const fixture = setup();
     const component = fixture.componentInstance;
@@ -79,6 +129,7 @@ describe('LeaveRequestsComponent', () => {
 
     component.approve(pending);
     component.approve(pending);
+    expect(component.approving().has(pending.id)).toBeTrue();
 
     http.expectOne(`${API_URL}/leave-requests/7/approve`).flush({ ...pending, status: LeaveStatus.Approved });
     http.expectOne((r) => r.url === `${API_URL}/employees/balances`).flush([]);

@@ -1,7 +1,7 @@
 import { Component, DestroyRef, OnInit, inject, signal } from '@angular/core';
 import { DatePipe } from '@angular/common';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { Subject, finalize, switchMap, tap, timer } from 'rxjs';
+import { EMPTY, Subject, catchError, finalize, switchMap, tap, timer } from 'rxjs';
 import { EmployeeBalance, LEAVE_STATUS_LABELS, LEAVE_TYPE_LABELS, LeaveRequest, LeaveStatus } from '../models/leave-request.model';
 import { LeaveRequestService } from '../services/leave-request.service';
 import { EmployeeService } from '../services/employee.service';
@@ -32,12 +32,28 @@ export class LeaveRequestsComponent implements OnInit {
   readonly approveErrors = signal<Readonly<Record<number, string>>>({});
   readonly notice = signal<string | null>(null);
   private readonly notice$ = new Subject<string>();
+  private readonly refreshBalances$ = new Subject<void>();
 
   readonly LeaveStatus = LeaveStatus;
   readonly typeLabels = LEAVE_TYPE_LABELS;
   readonly statusLabels = LEAVE_STATUS_LABELS;
 
   constructor() {
+    this.refreshBalances$
+      .pipe(
+        switchMap(() => this.employeeService.getBalances(this.balanceYear).pipe(
+          catchError((err) => {
+            this.balancesError.set(apiErrorMessage(err, 'Could not load balances.'));
+            return EMPTY;
+          })
+        )),
+        takeUntilDestroyed()
+      )
+      .subscribe((balances) => {
+        this.balances.set(balances);
+        this.balancesError.set(null);
+      });
+
     // Show the latest success message and hide it a few seconds later.
     this.notice$
       .pipe(
@@ -63,21 +79,19 @@ export class LeaveRequestsComponent implements OnInit {
         takeUntilDestroyed(this.destroyRef)
       )
       .subscribe({
-        next: (requests) => this.requests.set(requests),
+        next: (requests) => {
+          // Preserve local updates made while the list was loading.
+          this.requests.update((local) =>
+            [...new Map([...requests, ...local].map((r) => [r.id, r])).values()]
+              .sort((a, b) => b.startDate.localeCompare(a.startDate))
+          );
+        },
         error: (err) => this.loadError.set(apiErrorMessage(err, 'Could not load leave requests.'))
       });
   }
 
   loadBalances(): void {
-    this.employeeService.getBalances(this.balanceYear)
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe({
-        next: (balances) => {
-          this.balances.set(balances);
-          this.balancesError.set(null);
-        },
-        error: (err) => this.balancesError.set(apiErrorMessage(err, 'Could not load balances.'))
-      });
+    this.refreshBalances$.next();
   }
 
   onCreated(request: LeaveRequest): void {

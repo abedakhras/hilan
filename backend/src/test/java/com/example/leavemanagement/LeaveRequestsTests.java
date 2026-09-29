@@ -34,6 +34,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.junit.jupiter.api.Assertions.*;
@@ -222,11 +223,11 @@ class LeaveRequestsTests {
 
             int succeeded = 0;
             for (Future<Boolean> f : results) {
-                if (f.get()) succeeded++;
+                if (f.get(10, TimeUnit.SECONDS)) succeeded++;
             }
             assertEquals(1, succeeded);
         } finally {
-            pool.shutdown();
+            pool.shutdownNow();
         }
 
         long approved = leaveRequests.findAllById(List.of(first.getId(), second.getId())).stream()
@@ -332,6 +333,53 @@ class LeaveRequestsTests {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.days").value(2))
                 .andExpect(jsonPath("$.employeeName").value("Test Emp"));
+    }
+
+    @Test
+    void api_BalancesRejectsYearsOutsideSupportedRange() throws Exception {
+        for (int year : List.of(0, -1, 10000, 1000000000)) {
+            mvc.perform(get("/api/employees/balances").param("year", Integer.toString(year)))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.detail").value("Year must be between 1 and 9999"));
+        }
+    }
+
+    @Test
+    void api_BalancesAcceptsYearBoundaries() throws Exception {
+        for (int year : List.of(1, 9999)) {
+            mvc.perform(get("/api/employees/balances").param("year", Integer.toString(year)))
+                    .andExpect(status().isOk());
+        }
+    }
+
+    @Test
+    void api_InvalidYearParameterReturnsProblemDetail() throws Exception {
+        mvc.perform(get("/api/employees/balances").param("year", "abc"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.detail").value("Invalid value for parameter 'year'"));
+    }
+
+    @Test
+    void api_UnreadableRequestBodiesReturnProblemDetail() throws Exception {
+        List<String> bodies = List.of(
+                "{",
+                """
+                {"employeeId": 1, "type": 0, "startDate": "not-a-date", "endDate": "2026-05-04"}
+                """,
+                """
+                {"employeeId": 1, "type": 99, "startDate": "2026-05-03", "endDate": "2026-05-04"}
+                """);
+        long before = leaveRequests.count();
+        for (String body : bodies) {
+            mvc.perform(post("/api/leave-requests")
+                            .contentType(MediaType.APPLICATION_JSON).content(body))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.status").value(400))
+                    .andExpect(jsonPath("$.detail").value(
+                            "Invalid request body. Check the JSON, dates (yyyy-MM-dd), and leave type (0, 1, or 2)."));
+        }
+        assertEquals(before, leaveRequests.count());
     }
 
     // --- helpers ---

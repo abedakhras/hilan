@@ -19,6 +19,11 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.time.LocalDate;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -122,12 +127,108 @@ class LeaveRequestsTests {
         assertTrue(result.getStatusCode().is2xxSuccessful());
     }
 
+    @Test
+    void approve_PendingRequest_Succeeds() {
+        Employee emp = employeeWithUsedDays(20, 5);
+        LeaveRequest pending = savePending(emp, LocalDate.of(2026, 6, 1), 3);
+
+        ResponseEntity<?> result = controller.approve(pending.getId());
+
+        assertEquals(200, result.getStatusCode().value());
+        assertEquals(LeaveStatus.APPROVED, leaveRequests.findById(pending.getId()).orElseThrow().getStatus());
+    }
+
+    @Test
+    void approve_AlreadyApproved_ReturnsConflict() {
+        Employee emp = employeeWithUsedDays(20, 5);
+        LeaveRequest pending = savePending(emp, LocalDate.of(2026, 6, 1), 3);
+        controller.approve(pending.getId());
+
+        ResponseEntity<?> result = controller.approve(pending.getId());
+
+        assertEquals(409, result.getStatusCode().value());
+    }
+
+    @Test
+    void approve_RejectedRequest_ReturnsConflict() {
+        Employee emp = employeeWithUsedDays(20, 5);
+        LeaveRequest r = savePending(emp, LocalDate.of(2026, 6, 1), 3);
+        r.setStatus(LeaveStatus.REJECTED);
+        leaveRequests.save(r);
+
+        ResponseEntity<?> result = controller.approve(r.getId());
+
+        assertEquals(409, result.getStatusCode().value());
+    }
+
+    @Test
+    void approve_UnknownRequest_ReturnsNotFound() {
+        ResponseEntity<?> result = controller.approve(999_999L);
+
+        assertEquals(404, result.getStatusCode().value());
+    }
+
+    @Test
+    void approve_WhenBalanceWasUsedInTheMeantime_ReturnsConflict() {
+        Employee emp = employeeWithUsedDays(10, 0);
+        LeaveRequest first = savePending(emp, LocalDate.of(2026, 6, 1), 6);
+        LeaveRequest second = savePending(emp, LocalDate.of(2026, 7, 1), 6);
+
+        assertEquals(200, controller.approve(first.getId()).getStatusCode().value());
+        assertEquals(409, controller.approve(second.getId()).getStatusCode().value());
+    }
+
+    @Test
+    void approve_TwoRequestsAtTheSameTime_OnlyOneFitsTheQuota() throws Exception {
+        Employee emp = employeeWithUsedDays(10, 0);
+        LeaveRequest first = savePending(emp, LocalDate.of(2026, 6, 1), 6);
+        LeaveRequest second = savePending(emp, LocalDate.of(2026, 7, 1), 6);
+
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        CountDownLatch start = new CountDownLatch(1);
+        try {
+            Future<ResponseEntity<?>> a = pool.submit(() -> {
+                start.await();
+                return controller.approve(first.getId());
+            });
+            Future<ResponseEntity<?>> b = pool.submit(() -> {
+                start.await();
+                return controller.approve(second.getId());
+            });
+            start.countDown();
+
+            List<Integer> codes = List.of(a.get().getStatusCode().value(), b.get().getStatusCode().value());
+            assertTrue(codes.contains(200));
+            assertTrue(codes.contains(409));
+        } finally {
+            pool.shutdown();
+        }
+
+        long approved = leaveRequests.findAllById(List.of(first.getId(), second.getId())).stream()
+                .filter(r -> r.getStatus() == LeaveStatus.APPROVED)
+                .count();
+        assertEquals(1, approved);
+    }
+
+    private LeaveRequest savePending(Employee emp, LocalDate start, int days) {
+        LeaveRequest r = new LeaveRequest();
+        r.setEmployeeId(emp.getId());
+        r.setType(LeaveType.VACATION);
+        r.setStartDate(start);
+        r.setEndDate(start.plusDays(days - 1));
+        r.setDays(days);
+        r.setStatus(LeaveStatus.PENDING);
+        return leaveRequests.save(r);
+    }
+
     private Employee employeeWithUsedDays(int quota, int usedDays) {
         Employee emp = new Employee();
         emp.setName("Test Emp");
         emp.setAnnualQuota(quota);
         employees.save(emp);
-        saveApproved(emp, LocalDate.of(2026, 1, 5), usedDays);
+        if (usedDays > 0) {
+            saveApproved(emp, LocalDate.of(2026, 1, 5), usedDays);
+        }
         return emp;
     }
 

@@ -1,14 +1,23 @@
 package com.example.leavemanagement.dto;
 
 import com.example.leavemanagement.model.LeaveType;
+import jakarta.validation.constraints.NotNull;
+
 import java.time.LocalDate;
 
 // Incoming payload for creating a leave request.
 public class CreateLeaveRequestDto {
 
+    @NotNull(message = "is required")
     private Long employeeId;
+
+    @NotNull(message = "is required")
     private LeaveType type;
+
+    @NotNull(message = "is required")
     private LocalDate startDate;
+
+    @NotNull(message = "is required")
     private LocalDate endDate;
 
     public Long getEmployeeId() { return employeeId; }

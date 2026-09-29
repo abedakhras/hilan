@@ -15,6 +15,8 @@ import java.util.Optional;
 
 public interface LeaveRequestRepository extends JpaRepository<LeaveRequest, Long> {
 
+    List<LeaveRequest> findAllByOrderByStartDateDesc();
+
     List<LeaveRequest> findByEmployee_NameContainingIgnoreCaseOrderByStartDateDesc(String name);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)

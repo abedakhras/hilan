@@ -1,35 +1,47 @@
 package com.example.leavemanagement;
 
-import com.example.leavemanagement.controller.LeaveRequestsController;
 import com.example.leavemanagement.dto.CreateLeaveRequestDto;
+import com.example.leavemanagement.dto.LeaveRequestResponse;
+import com.example.leavemanagement.exception.ConflictException;
+import com.example.leavemanagement.exception.InvalidRequestException;
+import com.example.leavemanagement.exception.NotFoundException;
 import com.example.leavemanagement.model.Employee;
 import com.example.leavemanagement.model.LeaveRequest;
 import com.example.leavemanagement.model.LeaveStatus;
 import com.example.leavemanagement.model.LeaveType;
 import com.example.leavemanagement.repository.EmployeeRepository;
 import com.example.leavemanagement.repository.LeaveRequestRepository;
+import com.example.leavemanagement.service.LeaveRequestService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.http.ResponseEntity;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.web.servlet.MockMvc;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 // Runs against a real, throwaway PostgreSQL started by Testcontainers.
 // (Docker must be available on the machine running the tests.)
 @SpringBootTest
+@AutoConfigureMockMvc
 @Testcontainers
 class LeaveRequestsTests {
 
@@ -44,7 +56,7 @@ class LeaveRequestsTests {
     }
 
     @Autowired
-    private LeaveRequestsController controller;
+    private LeaveRequestService service;
 
     @Autowired
     private EmployeeRepository employees;
@@ -52,27 +64,21 @@ class LeaveRequestsTests {
     @Autowired
     private LeaveRequestRepository leaveRequests;
 
+    @Autowired
+    private MockMvc mvc;
+
+    // --- create ---
+
     @Test
     void create_WithinQuota_Succeeds() {
-        // Arrange
-        Employee emp = new Employee();
-        emp.setName("Test Emp");
-        emp.setAnnualQuota(20);
-        employees.save(emp);
-
+        Employee emp = employeeWithUsedDays(20, 0);
         long before = leaveRequests.count();
 
-        CreateLeaveRequestDto dto = new CreateLeaveRequestDto();
-        dto.setEmployeeId(emp.getId());
-        dto.setType(LeaveType.VACATION);
-        dto.setStartDate(LocalDate.of(2026, 3, 1));
-        dto.setEndDate(LocalDate.of(2026, 3, 3)); // 3 days, well within the quota
+        LeaveRequestResponse created = service.create(vacation(emp, LocalDate.of(2026, 3, 1), LocalDate.of(2026, 3, 3)));
 
-        // Act
-        ResponseEntity<?> result = controller.create(dto);
-
-        // Assert
-        assertTrue(result.getStatusCode().is2xxSuccessful());
+        assertEquals(3, created.days());
+        assertEquals(LeaveStatus.PENDING, created.status());
+        assertEquals("Test Emp", created.employeeName());
         assertEquals(before + 1, leaveRequests.count());
     }
 
@@ -81,15 +87,10 @@ class LeaveRequestsTests {
         Employee emp = employeeWithUsedDays(20, 18);
         long before = leaveRequests.count();
 
-        CreateLeaveRequestDto dto = new CreateLeaveRequestDto();
-        dto.setEmployeeId(emp.getId());
-        dto.setType(LeaveType.VACATION);
-        dto.setStartDate(LocalDate.of(2026, 5, 3));
-        dto.setEndDate(LocalDate.of(2026, 5, 7)); // 5 days, only 2 left
+        // 5 days, only 2 left
+        CreateLeaveRequestDto dto = vacation(emp, LocalDate.of(2026, 5, 3), LocalDate.of(2026, 5, 7));
 
-        ResponseEntity<?> result = controller.create(dto);
-
-        assertEquals(400, result.getStatusCode().value());
+        assertThrows(InvalidRequestException.class, () -> service.create(dto));
         assertEquals(before, leaveRequests.count());
     }
 
@@ -97,85 +98,95 @@ class LeaveRequestsTests {
     void create_UsingExactlyRemainingBalance_Succeeds() {
         Employee emp = employeeWithUsedDays(20, 18);
 
-        CreateLeaveRequestDto dto = new CreateLeaveRequestDto();
-        dto.setEmployeeId(emp.getId());
-        dto.setType(LeaveType.VACATION);
-        dto.setStartDate(LocalDate.of(2026, 5, 3));
-        dto.setEndDate(LocalDate.of(2026, 5, 4)); // 2 days
+        LeaveRequestResponse created = service.create(vacation(emp, LocalDate.of(2026, 5, 3), LocalDate.of(2026, 5, 4)));
 
-        ResponseEntity<?> result = controller.create(dto);
-
-        assertTrue(result.getStatusCode().is2xxSuccessful());
+        assertEquals(2, created.days());
     }
 
     @Test
     void create_LastYearsLeaveDoesNotCountAgainstThisYear() {
-        Employee emp = new Employee();
-        emp.setName("Test Emp");
-        emp.setAnnualQuota(20);
-        employees.save(emp);
+        Employee emp = employeeWithUsedDays(20, 0);
         saveApproved(emp, LocalDate.of(2025, 8, 1), 18);
 
+        LeaveRequestResponse created = service.create(vacation(emp, LocalDate.of(2026, 5, 3), LocalDate.of(2026, 5, 7)));
+
+        assertEquals(5, created.days());
+    }
+
+    @Test
+    void create_SickLeaveIsNotLimitedByVacationQuota() {
+        Employee emp = employeeWithUsedDays(20, 20);
+        CreateLeaveRequestDto dto = vacation(emp, LocalDate.of(2026, 5, 3), LocalDate.of(2026, 5, 7));
+        dto.setType(LeaveType.SICK);
+
+        assertEquals(LeaveStatus.PENDING, service.create(dto).status());
+    }
+
+    @Test
+    void create_EndBeforeStart_IsRejected() {
+        Employee emp = employeeWithUsedDays(20, 0);
+        CreateLeaveRequestDto dto = vacation(emp, LocalDate.of(2026, 5, 7), LocalDate.of(2026, 5, 3));
+
+        assertThrows(InvalidRequestException.class, () -> service.create(dto));
+    }
+
+    @Test
+    void create_UnknownEmployee_ThrowsNotFound() {
         CreateLeaveRequestDto dto = new CreateLeaveRequestDto();
-        dto.setEmployeeId(emp.getId());
+        dto.setEmployeeId(999_999L);
         dto.setType(LeaveType.VACATION);
         dto.setStartDate(LocalDate.of(2026, 5, 3));
-        dto.setEndDate(LocalDate.of(2026, 5, 7));
+        dto.setEndDate(LocalDate.of(2026, 5, 4));
 
-        ResponseEntity<?> result = controller.create(dto);
-
-        assertTrue(result.getStatusCode().is2xxSuccessful());
+        assertThrows(NotFoundException.class, () -> service.create(dto));
     }
+
+    // --- approve ---
 
     @Test
     void approve_PendingRequest_Succeeds() {
         Employee emp = employeeWithUsedDays(20, 5);
         LeaveRequest pending = savePending(emp, LocalDate.of(2026, 6, 1), 3);
 
-        ResponseEntity<?> result = controller.approve(pending.getId());
+        LeaveRequestResponse approved = service.approve(pending.getId());
 
-        assertEquals(200, result.getStatusCode().value());
+        assertEquals(LeaveStatus.APPROVED, approved.status());
         assertEquals(LeaveStatus.APPROVED, leaveRequests.findById(pending.getId()).orElseThrow().getStatus());
     }
 
     @Test
-    void approve_AlreadyApproved_ReturnsConflict() {
+    void approve_AlreadyApproved_ThrowsConflict() {
         Employee emp = employeeWithUsedDays(20, 5);
         LeaveRequest pending = savePending(emp, LocalDate.of(2026, 6, 1), 3);
-        controller.approve(pending.getId());
+        service.approve(pending.getId());
 
-        ResponseEntity<?> result = controller.approve(pending.getId());
-
-        assertEquals(409, result.getStatusCode().value());
+        assertThrows(ConflictException.class, () -> service.approve(pending.getId()));
     }
 
     @Test
-    void approve_RejectedRequest_ReturnsConflict() {
+    void approve_RejectedRequest_ThrowsConflict() {
         Employee emp = employeeWithUsedDays(20, 5);
         LeaveRequest r = savePending(emp, LocalDate.of(2026, 6, 1), 3);
         r.setStatus(LeaveStatus.REJECTED);
         leaveRequests.save(r);
 
-        ResponseEntity<?> result = controller.approve(r.getId());
-
-        assertEquals(409, result.getStatusCode().value());
+        assertThrows(ConflictException.class, () -> service.approve(r.getId()));
     }
 
     @Test
-    void approve_UnknownRequest_ReturnsNotFound() {
-        ResponseEntity<?> result = controller.approve(999_999L);
-
-        assertEquals(404, result.getStatusCode().value());
+    void approve_UnknownRequest_ThrowsNotFound() {
+        assertThrows(NotFoundException.class, () -> service.approve(999_999L));
     }
 
     @Test
-    void approve_WhenBalanceWasUsedInTheMeantime_ReturnsConflict() {
+    void approve_WhenBalanceWasUsedInTheMeantime_ThrowsConflict() {
         Employee emp = employeeWithUsedDays(10, 0);
         LeaveRequest first = savePending(emp, LocalDate.of(2026, 6, 1), 6);
         LeaveRequest second = savePending(emp, LocalDate.of(2026, 7, 1), 6);
 
-        assertEquals(200, controller.approve(first.getId()).getStatusCode().value());
-        assertEquals(409, controller.approve(second.getId()).getStatusCode().value());
+        service.approve(first.getId());
+
+        assertThrows(ConflictException.class, () -> service.approve(second.getId()));
     }
 
     @Test
@@ -186,20 +197,27 @@ class LeaveRequestsTests {
 
         ExecutorService pool = Executors.newFixedThreadPool(2);
         CountDownLatch start = new CountDownLatch(1);
+        List<Future<Boolean>> results = new ArrayList<>();
         try {
-            Future<ResponseEntity<?>> a = pool.submit(() -> {
-                start.await();
-                return controller.approve(first.getId());
-            });
-            Future<ResponseEntity<?>> b = pool.submit(() -> {
-                start.await();
-                return controller.approve(second.getId());
-            });
+            for (Long id : List.of(first.getId(), second.getId())) {
+                Callable<Boolean> approve = () -> {
+                    start.await();
+                    try {
+                        service.approve(id);
+                        return true;
+                    } catch (ConflictException e) {
+                        return false;
+                    }
+                };
+                results.add(pool.submit(approve));
+            }
             start.countDown();
 
-            List<Integer> codes = List.of(a.get().getStatusCode().value(), b.get().getStatusCode().value());
-            assertTrue(codes.contains(200));
-            assertTrue(codes.contains(409));
+            int succeeded = 0;
+            for (Future<Boolean> f : results) {
+                if (f.get()) succeeded++;
+            }
+            assertEquals(1, succeeded);
         } finally {
             pool.shutdown();
         }
@@ -210,26 +228,70 @@ class LeaveRequestsTests {
         assertEquals(1, approved);
     }
 
+    // --- search ---
+
     @Test
     void search_DoesNotTreatInputAsSql() {
         Employee emp = employeeWithUsedDays(20, 3);
 
-        ResponseEntity<List<LeaveRequest>> injected = controller.search("x' OR '1'='1");
-        ResponseEntity<List<LeaveRequest>> byName = controller.search("test emp");
-
-        assertTrue(injected.getBody().isEmpty());
-        assertTrue(byName.getBody().stream().anyMatch(r -> r.getEmployeeId().equals(emp.getId())));
+        assertTrue(service.searchByEmployeeName("x' OR '1'='1").isEmpty());
+        assertTrue(service.searchByEmployeeName("test emp").stream()
+                .anyMatch(r -> r.employeeId().equals(emp.getId())));
     }
 
-    private LeaveRequest savePending(Employee emp, LocalDate start, int days) {
-        LeaveRequest r = new LeaveRequest();
-        r.setEmployeeId(emp.getId());
-        r.setType(LeaveType.VACATION);
-        r.setStartDate(start);
-        r.setEndDate(start.plusDays(days - 1));
-        r.setDays(days);
-        r.setStatus(LeaveStatus.PENDING);
-        return leaveRequests.save(r);
+    // --- HTTP layer: status codes and error body ---
+
+    @Test
+    void api_ApproveUnknown_Returns404() throws Exception {
+        mvc.perform(post("/api/leave-requests/999999/approve"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.detail").value("Leave request 999999 not found"));
+    }
+
+    @Test
+    void api_ApproveTwice_Returns409() throws Exception {
+        Employee emp = employeeWithUsedDays(20, 0);
+        LeaveRequest pending = savePending(emp, LocalDate.of(2026, 6, 1), 3);
+
+        mvc.perform(post("/api/leave-requests/" + pending.getId() + "/approve"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value(1));
+        mvc.perform(post("/api/leave-requests/" + pending.getId() + "/approve"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail").value("Leave request is already approved"));
+    }
+
+    @Test
+    void api_CreateWithMissingFields_Returns400() throws Exception {
+        mvc.perform(post("/api/leave-requests")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"employeeId\": 1, \"startDate\": \"2026-05-03\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").exists());
+    }
+
+    @Test
+    void api_CreateValid_Returns201() throws Exception {
+        Employee emp = employeeWithUsedDays(20, 0);
+
+        mvc.perform(post("/api/leave-requests")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"employeeId\": " + emp.getId() + ", \"type\": 0, "
+                                + "\"startDate\": \"2026-05-03\", \"endDate\": \"2026-05-04\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.days").value(2))
+                .andExpect(jsonPath("$.employeeName").value("Test Emp"));
+    }
+
+    // --- helpers ---
+
+    private CreateLeaveRequestDto vacation(Employee emp, LocalDate start, LocalDate end) {
+        CreateLeaveRequestDto dto = new CreateLeaveRequestDto();
+        dto.setEmployeeId(emp.getId());
+        dto.setType(LeaveType.VACATION);
+        dto.setStartDate(start);
+        dto.setEndDate(end);
+        return dto;
     }
 
     private Employee employeeWithUsedDays(int quota, int usedDays) {
@@ -244,13 +306,19 @@ class LeaveRequestsTests {
     }
 
     private void saveApproved(Employee emp, LocalDate start, int days) {
+        LeaveRequest r = savePending(emp, start, days);
+        r.setStatus(LeaveStatus.APPROVED);
+        leaveRequests.save(r);
+    }
+
+    private LeaveRequest savePending(Employee emp, LocalDate start, int days) {
         LeaveRequest r = new LeaveRequest();
         r.setEmployeeId(emp.getId());
         r.setType(LeaveType.VACATION);
         r.setStartDate(start);
         r.setEndDate(start.plusDays(days - 1));
         r.setDays(days);
-        r.setStatus(LeaveStatus.APPROVED);
-        leaveRequests.save(r);
+        r.setStatus(LeaveStatus.PENDING);
+        return leaveRequests.save(r);
     }
 }

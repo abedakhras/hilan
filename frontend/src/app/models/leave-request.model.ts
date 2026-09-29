@@ -29,6 +29,19 @@ export interface Employee {
   annualQuota: number;
 }
 
+// Per calendar year. "used" = approved days, "pending" = waiting for approval.
+export interface EmployeeBalance {
+  employeeId: number;
+  employeeName: string;
+  year: number;
+  vacationQuota: number;
+  vacationUsed: number;
+  vacationPending: number;
+  vacationRemaining: number;
+  sickUsed: number;
+  unpaidUsed: number;
+}
+
 export interface LeaveRequest {
   id: number;
   employeeId: number;

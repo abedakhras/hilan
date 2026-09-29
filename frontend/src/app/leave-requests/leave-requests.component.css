@@ -42,3 +42,15 @@ button:disabled {
   font-size: 13px;
   margin-top: 4px;
 }
+
+.balances {
+  margin-bottom: 16px;
+}
+
+.remaining {
+  font-weight: 600;
+}
+
+.remaining.low {
+  color: #b42318;
+}

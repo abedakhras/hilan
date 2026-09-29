@@ -23,6 +23,7 @@ describe('LeaveRequestsComponent', () => {
     const fixture = TestBed.createComponent(LeaveRequestsComponent);
     fixture.detectChanges();
     http.expectOne(`${API_URL}/leave-requests`).flush([pending]);
+    http.expectOne((r) => r.url === `${API_URL}/employees/balances`).flush([]);
     http.expectOne(`${API_URL}/employees`).flush([]); // loaded by the embedded form
     fixture.detectChanges();
     return fixture;
@@ -50,6 +51,8 @@ describe('LeaveRequestsComponent', () => {
     expect(component.approving().has(7)).toBeFalse();
     expect(component.requests()[0].status).toBe(LeaveStatus.Approved);
     expect(component.notice()).toContain('#7');
+    // balances are refreshed after an approve
+    http.expectOne((r) => r.url === `${API_URL}/employees/balances`).flush([]);
     // no reload of the list
     http.expectNone(`${API_URL}/leave-requests`);
   });
@@ -78,5 +81,6 @@ describe('LeaveRequestsComponent', () => {
     component.approve(pending);
 
     http.expectOne(`${API_URL}/leave-requests/7/approve`).flush({ ...pending, status: LeaveStatus.Approved });
+    http.expectOne((r) => r.url === `${API_URL}/employees/balances`).flush([]);
   });
 });

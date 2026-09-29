@@ -2,8 +2,9 @@ import { Component, DestroyRef, OnInit, inject, signal } from '@angular/core';
 import { DatePipe } from '@angular/common';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { Subject, finalize, switchMap, tap, timer } from 'rxjs';
-import { LEAVE_STATUS_LABELS, LEAVE_TYPE_LABELS, LeaveRequest, LeaveStatus } from '../models/leave-request.model';
+import { EmployeeBalance, LEAVE_STATUS_LABELS, LEAVE_TYPE_LABELS, LeaveRequest, LeaveStatus } from '../models/leave-request.model';
 import { LeaveRequestService } from '../services/leave-request.service';
+import { EmployeeService } from '../services/employee.service';
 import { apiErrorMessage } from '../services/api-error';
 import { LeaveRequestFormComponent } from '../leave-request-form/leave-request-form.component';
 
@@ -16,11 +17,16 @@ import { LeaveRequestFormComponent } from '../leave-request-form/leave-request-f
 })
 export class LeaveRequestsComponent implements OnInit {
   private readonly leaveRequestService = inject(LeaveRequestService);
+  private readonly employeeService = inject(EmployeeService);
   private readonly destroyRef = inject(DestroyRef);
 
   readonly requests = signal<LeaveRequest[]>([]);
   readonly loading = signal(false);
   readonly loadError = signal<string | null>(null);
+
+  readonly balanceYear = new Date().getFullYear();
+  readonly balances = signal<EmployeeBalance[]>([]);
+  readonly balancesError = signal<string | null>(null);
 
   readonly approving = signal<ReadonlySet<number>>(new Set());
   readonly approveErrors = signal<Readonly<Record<number, string>>>({});
@@ -44,6 +50,7 @@ export class LeaveRequestsComponent implements OnInit {
 
   ngOnInit(): void {
     this.load();
+    this.loadBalances();
   }
 
   load(): void {
@@ -61,11 +68,24 @@ export class LeaveRequestsComponent implements OnInit {
       });
   }
 
+  loadBalances(): void {
+    this.employeeService.getBalances(this.balanceYear)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (balances) => {
+          this.balances.set(balances);
+          this.balancesError.set(null);
+        },
+        error: (err) => this.balancesError.set(apiErrorMessage(err, 'Could not load balances.'))
+      });
+  }
+
   onCreated(request: LeaveRequest): void {
     this.requests.update((list) =>
       [request, ...list].sort((a, b) => b.startDate.localeCompare(a.startDate))
     );
     this.notice$.next(`Request #${request.id} submitted.`);
+    this.loadBalances();
   }
 
   approve(request: LeaveRequest): void {
@@ -86,6 +106,7 @@ export class LeaveRequestsComponent implements OnInit {
           // Only the approved row changes, no need to reload the whole list.
           this.requests.update((list) => list.map((r) => (r.id === updated.id ? updated : r)));
           this.notice$.next(`Request #${updated.id} (${updated.employeeName}) approved.`);
+          this.loadBalances();
         },
         error: (err) => this.setApproveError(id, apiErrorMessage(err, 'Could not approve this request.'))
       });

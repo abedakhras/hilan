@@ -1,6 +1,7 @@
 package com.example.leavemanagement;
 
 import com.example.leavemanagement.dto.CreateLeaveRequestDto;
+import com.example.leavemanagement.dto.EmployeeBalanceResponse;
 import com.example.leavemanagement.dto.LeaveRequestResponse;
 import com.example.leavemanagement.exception.ConflictException;
 import com.example.leavemanagement.exception.InvalidRequestException;
@@ -11,6 +12,7 @@ import com.example.leavemanagement.model.LeaveStatus;
 import com.example.leavemanagement.model.LeaveType;
 import com.example.leavemanagement.repository.EmployeeRepository;
 import com.example.leavemanagement.repository.LeaveRequestRepository;
+import com.example.leavemanagement.service.EmployeeBalanceService;
 import com.example.leavemanagement.service.LeaveRequestService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,7 +35,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
+import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -63,6 +67,9 @@ class LeaveRequestsTests {
 
     @Autowired
     private LeaveRequestRepository leaveRequests;
+
+    @Autowired
+    private EmployeeBalanceService balances;
 
     @Autowired
     private MockMvc mvc;
@@ -237,6 +244,50 @@ class LeaveRequestsTests {
         assertTrue(service.searchByEmployeeName("x' OR '1'='1").isEmpty());
         assertTrue(service.searchByEmployeeName("test emp").stream()
                 .anyMatch(r -> r.employeeId().equals(emp.getId())));
+    }
+
+    // --- balances ---
+
+    @Test
+    void balances_CountApprovedPendingAndOtherTypesForTheYear() {
+        Employee emp = employeeWithUsedDays(20, 5);           // 5 approved vacation in 2026
+        savePending(emp, LocalDate.of(2026, 6, 1), 3);        // 3 pending vacation
+        saveApproved(emp, LocalDate.of(2025, 6, 1), 4);       // last year, ignored
+        LeaveRequest sick = savePending(emp, LocalDate.of(2026, 2, 1), 2);
+        sick.setType(LeaveType.SICK);
+        sick.setStatus(LeaveStatus.APPROVED);
+        leaveRequests.save(sick);
+
+        EmployeeBalanceResponse b = balances.getBalances(2026).stream()
+                .filter(x -> x.employeeId().equals(emp.getId()))
+                .findFirst().orElseThrow();
+
+        assertEquals(20, b.vacationQuota());
+        assertEquals(5, b.vacationUsed());
+        assertEquals(3, b.vacationPending());
+        assertEquals(15, b.vacationRemaining());
+        assertEquals(2, b.sickUsed());
+        assertEquals(0, b.unpaidUsed());
+    }
+
+    @Test
+    void balances_EmployeeWithNoRequestsHasFullQuota() {
+        Employee emp = employeeWithUsedDays(14, 0);
+
+        EmployeeBalanceResponse b = balances.getBalances(2026).stream()
+                .filter(x -> x.employeeId().equals(emp.getId()))
+                .findFirst().orElseThrow();
+
+        assertEquals(14, b.vacationRemaining());
+        assertEquals(0, b.vacationUsed());
+    }
+
+    @Test
+    void api_Balances_ReturnsOneRowPerEmployee() throws Exception {
+        mvc.perform(get("/api/employees/balances").param("year", "2026"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(greaterThanOrEqualTo(2)))
+                .andExpect(jsonPath("$[0].vacationRemaining").exists());
     }
 
     // --- HTTP layer: status codes and error body ---

@@ -2,6 +2,38 @@
 
 <app-leave-request-form (created)="onCreated($event)" />
 
+<h3>Balances ({{ balanceYear }})</h3>
+@if (balancesError()) {
+  <div class="error">{{ balancesError() }}</div>
+} @else {
+  <table class="balances">
+    <thead>
+      <tr>
+        <th>Employee</th>
+        <th>Vacation quota</th>
+        <th>Vacation used</th>
+        <th>Vacation pending</th>
+        <th>Vacation remaining</th>
+        <th>Sick used</th>
+        <th>Unpaid used</th>
+      </tr>
+    </thead>
+    <tbody>
+      @for (b of balances(); track b.employeeId) {
+        <tr>
+          <td>{{ b.employeeName }}</td>
+          <td>{{ b.vacationQuota }}</td>
+          <td>{{ b.vacationUsed }}</td>
+          <td>{{ b.vacationPending }}</td>
+          <td class="remaining" [class.low]="b.vacationRemaining <= 2">{{ b.vacationRemaining }}</td>
+          <td>{{ b.sickUsed }}</td>
+          <td>{{ b.unpaidUsed }}</td>
+        </tr>
+      }
+    </tbody>
+  </table>
+}
+
 <div class="notice" role="status" aria-live="polite">
   @if (notice()) {
     <span class="success">{{ notice() }}</span>

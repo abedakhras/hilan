@@ -23,6 +23,21 @@ public interface LeaveRequestRepository extends JpaRepository<LeaveRequest, Long
     @Query("select r from LeaveRequest r where r.id = :id")
     Optional<LeaveRequest> findByIdForUpdate(@Param("id") Long id);
 
+    interface DaysTotal {
+        Long getEmployeeId();
+        LeaveType getType();
+        LeaveStatus getStatus();
+        Long getDays();
+    }
+
+    @Query("""
+            select r.employeeId as employeeId, r.type as type, r.status as status, sum(r.days) as days
+            from LeaveRequest r
+            where r.startDate between :from and :to
+            group by r.employeeId, r.type, r.status
+            """)
+    List<DaysTotal> sumDaysPerEmployee(@Param("from") LocalDate from, @Param("to") LocalDate to);
+
     @Query("""
             select coalesce(sum(r.days), 0) from LeaveRequest r
             where r.employeeId = :employeeId
